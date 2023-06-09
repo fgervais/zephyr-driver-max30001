@@ -1,0 +1,2 @@
+zephyr_library_amend()
+zephyr_library_sources_ifdef(CONFIG_MAX30001 max30001.c)

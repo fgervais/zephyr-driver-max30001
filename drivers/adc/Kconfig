@@ -1,0 +1,6 @@
+menuconfig MAX30001
+	bool "MAX30001 ECG analog front-end"
+	depends on SPI
+	depends on ADC
+	help
+	  Enable driver for the MAX30001 ECG analog front-end
