@@ -1,7 +1,7 @@
 /* Analog Devices Biopotential and Bioimpedance AFE
  */
 
-#define DT_DRV_COMPAT ti_ads7052
+#define DT_DRV_COMPAT ti_max30001
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/adc.h>
@@ -9,19 +9,19 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/kernel.h>
 
-LOG_MODULE_REGISTER(adc_ads7052);
+LOG_MODULE_REGISTER(adc_max30001);
 
 #define ADC_CONTEXT_USES_KERNEL_TIMER
 #include "adc_context.h"
 
-#define ADS7052_RESOLUTION 14U
+#define MAX30001_RESOLUTION 14U
 
-struct ads7052_config {
+struct max30001_config {
 	struct spi_dt_spec bus;
 	uint8_t channels;
 };
 
-struct ads7052_data {
+struct max30001_data {
 	struct adc_context ctx;
 	const struct device *dev;
 	uint16_t *buffer;
@@ -30,13 +30,13 @@ struct ads7052_data {
 	struct k_thread thread;
 	struct k_sem sem;
 
-	K_KERNEL_STACK_MEMBER(stack, CONFIG_ADC_ADS7052_ACQUISITION_THREAD_STACK_SIZE);
+	K_KERNEL_STACK_MEMBER(stack, CONFIG_ADC_MAX30001_ACQUISITION_THREAD_STACK_SIZE);
 };
 
-static int adc_ads7052_channel_setup(const struct device *dev,
+static int adc_max30001_channel_setup(const struct device *dev,
 				     const struct adc_channel_cfg *channel_cfg)
 {
-	const struct ads7052_config *config = dev->config;
+	const struct max30001_config *config = dev->config;
 
 	if (channel_cfg->gain != ADC_GAIN_1) {
 		LOG_ERR("unsupported channel gain '%d'", channel_cfg->gain);
@@ -60,7 +60,7 @@ static int adc_ads7052_channel_setup(const struct device *dev,
 	return 0;
 }
 
-static int ads7052_validate_buffer_size(const struct device *dev,
+static int max30001_validate_buffer_size(const struct device *dev,
 					const struct adc_sequence *sequence)
 {
 	uint8_t channels = 0;
@@ -81,15 +81,15 @@ static int ads7052_validate_buffer_size(const struct device *dev,
 }
 
 /**
- * @brief Send ADS7052 Offset calibration request
+ * @brief Send MAX30001 Offset calibration request
  *
  * On power-up, the host must provide 24 SCLKs in the first serial transfer to enter the OFFCAL
  * state. During normal operation, the host must provide 64 SCLKs in the serial transfer frame to
  * enter the OFFCAL state.
  */
-static int ads7052_send_calibration(const struct device *dev, bool power_up)
+static int max30001_send_calibration(const struct device *dev, bool power_up)
 {
-	const struct ads7052_config *config = dev->config;
+	const struct max30001_config *config = dev->config;
 	int err;
 	uint8_t sclks_needed = power_up ? 24 : 64;
 	uint8_t num_bytes = sclks_needed / 8;
@@ -103,13 +103,13 @@ static int ads7052_send_calibration(const struct device *dev, bool power_up)
 	return err;
 }
 
-static int ads7052_start_read(const struct device *dev, const struct adc_sequence *sequence)
+static int max30001_start_read(const struct device *dev, const struct adc_sequence *sequence)
 {
-	const struct ads7052_config *config = dev->config;
-	struct ads7052_data *data = dev->data;
+	const struct max30001_config *config = dev->config;
+	struct max30001_data *data = dev->data;
 	int err;
 
-	if (sequence->resolution != ADS7052_RESOLUTION) {
+	if (sequence->resolution != MAX30001_RESOLUTION) {
 		LOG_ERR("unsupported resolution %d", sequence->resolution);
 		return -ENOTSUP;
 	}
@@ -120,10 +120,10 @@ static int ads7052_start_read(const struct device *dev, const struct adc_sequenc
 	}
 
 	if (sequence->calibrate) {
-		ads7052_send_calibration(dev, false);
+		max30001_send_calibration(dev, false);
 	}
 
-	err = ads7052_validate_buffer_size(dev, sequence);
+	err = max30001_validate_buffer_size(dev, sequence);
 	if (err) {
 		LOG_ERR("buffer size too small");
 		return err;
@@ -135,27 +135,27 @@ static int ads7052_start_read(const struct device *dev, const struct adc_sequenc
 	return adc_context_wait_for_completion(&data->ctx);
 }
 
-static int adc_ads7052_read_async(const struct device *dev, const struct adc_sequence *sequence,
+static int adc_max30001_read_async(const struct device *dev, const struct adc_sequence *sequence,
 				  struct k_poll_signal *async)
 {
-	struct ads7052_data *data = dev->data;
+	struct max30001_data *data = dev->data;
 	int error;
 
 	adc_context_lock(&data->ctx, async ? true : false, async);
-	error = ads7052_start_read(dev, sequence);
+	error = max30001_start_read(dev, sequence);
 	adc_context_release(&data->ctx, error);
 
 	return error;
 }
 
-static int adc_ads7052_read(const struct device *dev, const struct adc_sequence *sequence)
+static int adc_max30001_read(const struct device *dev, const struct adc_sequence *sequence)
 {
-	return adc_ads7052_read_async(dev, sequence, NULL);
+	return adc_max30001_read_async(dev, sequence, NULL);
 }
 
 static void adc_context_start_sampling(struct adc_context *ctx)
 {
-	struct ads7052_data *data = CONTAINER_OF(ctx, struct ads7052_data, ctx);
+	struct max30001_data *data = CONTAINER_OF(ctx, struct max30001_data, ctx);
 
 	data->channels = ctx->sequence.channels;
 	data->repeat_buffer = data->buffer;
@@ -165,7 +165,7 @@ static void adc_context_start_sampling(struct adc_context *ctx)
 
 static void adc_context_update_buffer_pointer(struct adc_context *ctx, bool repeat_sampling)
 {
-	struct ads7052_data *data = CONTAINER_OF(ctx, struct ads7052_data, ctx);
+	struct max30001_data *data = CONTAINER_OF(ctx, struct max30001_data, ctx);
 
 	if (repeat_sampling) {
 		data->buffer = data->repeat_buffer;
@@ -179,13 +179,13 @@ static void adc_context_update_buffer_pointer(struct adc_context *ctx, bool repe
  *
  *  @return 14-bit integer in host endianness.
  */
-static inline int ads7052_get_be14(const uint8_t src[2])
+static inline int max30001_get_be14(const uint8_t src[2])
 {
 	return ((src[0] & 0x7F) << 7) | (src[1] >> 1);
 }
 
 /**
- * @brief Read ADS7052 over SPI interface
+ * @brief Read MAX30001 over SPI interface
  *
  * A leading 0 is output on the SDO pin on the CS falling edge.
  * The most significant bit (MSB) of the output data is launched on the SDO pin on the rising edge
@@ -196,9 +196,9 @@ static inline int ads7052_get_be14(const uint8_t src[2])
  * 18 SCLK falling edges in the present serial transfer frame, the device provides an invalid
  * conversion result in the next serial transfer frame
  */
-static int ads7052_read_channel(const struct device *dev, uint8_t channel, uint16_t *result)
+static int max30001_read_channel(const struct device *dev, uint8_t channel, uint16_t *result)
 {
-	const struct ads7052_config *config = dev->config;
+	const struct max30001_config *config = dev->config;
 	int err;
 	uint8_t rx_bytes[3];
 	const struct spi_buf rx_buf[1] = {{.buf = rx_bytes, .len = sizeof(rx_bytes)}};
@@ -209,19 +209,19 @@ static int ads7052_read_channel(const struct device *dev, uint8_t channel, uint1
 		return err;
 	}
 
-	*result = ads7052_get_be14(rx_bytes);
-	*result &= BIT_MASK(ADS7052_RESOLUTION);
+	*result = max30001_get_be14(rx_bytes);
+	*result &= BIT_MASK(MAX30001_RESOLUTION);
 
 	return 0;
 }
 
-static void ads7052_acquisition_thread(struct ads7052_data *data)
+static void max30001_acquisition_thread(struct max30001_data *data)
 {
 	uint16_t result = 0;
 	uint8_t channel;
 	int err = 0;
 
-	err = ads7052_send_calibration(data->dev, true);
+	err = max30001_send_calibration(data->dev, true);
 	if (err) {
 		LOG_ERR("failed to send powerup sequence (err %d)", err);
 	}
@@ -234,7 +234,7 @@ static void ads7052_acquisition_thread(struct ads7052_data *data)
 
 			LOG_DBG("reading channel %d", channel);
 
-			err = ads7052_read_channel(data->dev, channel, &result);
+			err = max30001_read_channel(data->dev, channel, &result);
 			if (err) {
 				LOG_ERR("failed to read channel %d (err %d)", channel, err);
 				adc_context_complete(&data->ctx, err);
@@ -251,10 +251,10 @@ static void ads7052_acquisition_thread(struct ads7052_data *data)
 	}
 }
 
-static int adc_ads7052_init(const struct device *dev)
+static int adc_max30001_init(const struct device *dev)
 {
-	const struct ads7052_config *config = dev->config;
-	struct ads7052_data *data = dev->data;
+	const struct max30001_config *config = dev->config;
+	struct max30001_data *data = dev->data;
 
 	data->dev = dev;
 
@@ -267,40 +267,40 @@ static int adc_ads7052_init(const struct device *dev)
 	}
 
 	k_thread_create(&data->thread, data->stack,
-			CONFIG_ADC_ADS7052_ACQUISITION_THREAD_STACK_SIZE,
-			(k_thread_entry_t)ads7052_acquisition_thread, data, NULL, NULL,
-			CONFIG_ADC_ADS7052_ACQUISITION_THREAD_PRIO, 0, K_NO_WAIT);
+			CONFIG_ADC_MAX30001_ACQUISITION_THREAD_STACK_SIZE,
+			(k_thread_entry_t)max30001_acquisition_thread, data, NULL, NULL,
+			CONFIG_ADC_MAX30001_ACQUISITION_THREAD_PRIO, 0, K_NO_WAIT);
 
 	adc_context_unlock_unconditionally(&data->ctx);
 
 	return 0;
 }
 
-static const struct adc_driver_api ads7052_api = {
-	.channel_setup = adc_ads7052_channel_setup,
-	.read = adc_ads7052_read,
+static const struct adc_driver_api max30001_api = {
+	.channel_setup = adc_max30001_channel_setup,
+	.read = adc_max30001_read,
 #ifdef CONFIG_ADC_ASYNC
-	.read_async = adc_ads7052_read_async,
+	.read_async = adc_max30001_read_async,
 #endif
 };
 
-#define ADC_ADS7052_SPI_CFG \
+#define ADC_MAX30001_SPI_CFG \
 	SPI_OP_MODE_MASTER | SPI_MODE_CPOL | SPI_MODE_CPHA | SPI_WORD_SET(8) | SPI_TRANSFER_MSB
 
-#define ADC_ADS7052_INIT(n)                                                                        \
+#define ADC_MAX30001_INIT(n)                                                                        \
                                                                                                    \
-	static const struct ads7052_config ads7052_cfg_##n = {                                     \
-		.bus = SPI_DT_SPEC_INST_GET(n, ADC_ADS7052_SPI_CFG, 1U),                           \
+	static const struct max30001_config max30001_cfg_##n = {                                     \
+		.bus = SPI_DT_SPEC_INST_GET(n, ADC_MAX30001_SPI_CFG, 1U),                           \
 		.channels = 1,                                                                     \
 	};                                                                                         \
                                                                                                    \
-	static struct ads7052_data ads7052_data_##n = {                                            \
-		ADC_CONTEXT_INIT_TIMER(ads7052_data_##n, ctx),                                     \
-		ADC_CONTEXT_INIT_LOCK(ads7052_data_##n, ctx),                                      \
-		ADC_CONTEXT_INIT_SYNC(ads7052_data_##n, ctx),                                      \
+	static struct max30001_data max30001_data_##n = {                                            \
+		ADC_CONTEXT_INIT_TIMER(max30001_data_##n, ctx),                                     \
+		ADC_CONTEXT_INIT_LOCK(max30001_data_##n, ctx),                                      \
+		ADC_CONTEXT_INIT_SYNC(max30001_data_##n, ctx),                                      \
 	};                                                                                         \
                                                                                                    \
-	DEVICE_DT_INST_DEFINE(n, adc_ads7052_init, NULL, &ads7052_data_##n, &ads7052_cfg_##n,      \
-			      POST_KERNEL, CONFIG_ADC_ADS7052_INIT_PRIORITY, &ads7052_api);
+	DEVICE_DT_INST_DEFINE(n, adc_max30001_init, NULL, &max30001_data_##n, &max30001_cfg_##n,      \
+			      POST_KERNEL, CONFIG_ADC_MAX30001_INIT_PRIORITY, &max30001_api);
 
-DT_INST_FOREACH_STATUS_OKAY(ADC_ADS7052_INIT)
+DT_INST_FOREACH_STATUS_OKAY(ADC_MAX30001_INIT)
